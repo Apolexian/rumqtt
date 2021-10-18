@@ -24,7 +24,7 @@ pub enum Error {
 /// appropriate to achieve performance
 pub struct Network {
     /// Socket for IO
-    socket: Box<dyn N>,
+    socket: Box<mio::net::UdpSocket>,
     /// Buffered reads
     read: BytesMut,
     /// Maximum packet size
@@ -35,8 +35,8 @@ pub struct Network {
 }
 
 impl Network {
-    pub fn new(socket: impl N + 'static, max_incoming_size: usize) -> Network {
-        let socket = Box::new(socket) as Box<dyn N>;
+    pub fn new(socket: mio::net::UdpSocket, max_incoming_size: usize) -> Network {
+        let socket = Box::new(socket);
         Network {
             socket,
             read: BytesMut::with_capacity(10 * 1024),
@@ -55,7 +55,7 @@ impl Network {
     async fn read_bytes(&mut self, required: usize) -> io::Result<usize> {
         let mut total_read = 0;
         loop {
-            let read = self.socket.read_buf(&mut self.read).await?;
+            let read = self.socket.recv(&mut self.read)?;
             if 0 == read {
                 return if self.read.is_empty() {
                     Err(io::Error::new(
@@ -165,7 +165,7 @@ impl Network {
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
 
-        self.socket.write_all(&write[..]).await?;
+        self.socket.send(&write[..])?;
         Ok(len)
     }
 
@@ -176,7 +176,7 @@ impl Network {
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
 
-        self.socket.write_all(&write[..]).await?;
+        self.socket.send(&write[..])?;
         Ok(len)
     }
 
@@ -185,7 +185,7 @@ impl Network {
             return Ok(());
         }
 
-        self.socket.write_all(&write[..]).await?;
+        self.socket.send(&write[..])?;
         write.clear();
         Ok(())
     }
