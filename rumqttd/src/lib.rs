@@ -2,6 +2,7 @@
 extern crate log;
 
 use serde::{Deserialize, Serialize};
+use std::net;
 use std::time::Duration;
 use std::{io, thread};
 use std::{net::SocketAddr, sync::Arc};
@@ -15,6 +16,9 @@ use crate::remotelink::RemoteLink;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
 use tokio::{task, time};
+
+use quiche;
+use ring::rand::*;
 
 // All requirements for `rustls`
 #[cfg(feature = "use-rustls")]
@@ -182,6 +186,18 @@ impl Default for ConsoleSettings {
         panic!("Console settings should be derived from configuration file")
     }
 }
+
+struct PartialResponse {
+    body: Vec<u8>,
+    written: usize,
+}
+
+struct Client {
+    conn: std::pin::Pin<Box<quiche::Connection>>,
+    partial_responses: HashMap<u64, PartialResponse>,
+}
+
+type ClientMap = HashMap<quiche::ConnectionId<'static>, Client>;
 
 pub struct Broker {
     config: Arc<Config>,
@@ -360,28 +376,38 @@ impl Server {
     }
 
     async fn start(&self) -> Result<(), Error> {
-        let listener = TcpListener::bind(&self.config.listen).await?;
+        // Create the configuration for the QUIC connections.
+        let mut qconfig = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
+
+        qconfig
+            .load_cert_chain_from_pem_file("examples/cert.crt")
+            .unwrap();
+        qconfig
+            .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+
+        qconfig
+            .set_application_protos(quiche::h3::APPLICATION_PROTOCOL)
+            .unwrap();
+
+        qconfig.set_max_idle_timeout(5000);
+        qconfig.set_max_recv_udp_payload_size(1350);
+        qconfig.set_max_send_udp_payload_size(1350);
+        qconfig.set_initial_max_data(10_000_000);
+        qconfig.set_initial_max_stream_data_bidi_local(1_000_000);
+        qconfig.set_initial_max_stream_data_bidi_remote(1_000_000);
+        qconfig.set_initial_max_stream_data_uni(1_000_000);
+        qconfig.set_initial_max_streams_bidi(100);
+        qconfig.set_initial_max_streams_uni(100);
+        qconfig.set_disable_active_migration(true);
+        qconfig.enable_early_data();
+
+        let mut buf = [0; 65535];
+        let mut out = [0; 1350];
         let delay = Duration::from_millis(self.config.next_connection_delay_ms);
-        let mut count = 0;
+        let mut count: u16 = 0;
 
         let config = Arc::new(self.config.connections.clone());
-
-        // Get the ServerTLSAcceptor which allow us to use either Rustls or Native TLS
-        #[cfg(any(feature = "use-rustls", feature = "use-native-tls"))]
-        let acceptor = match &self.config.cert {
-            Some(c) => match c {
-                ServerCert::RustlsCert {
-                    ca_path,
-                    cert_path,
-                    key_path,
-                } => self.tls_rustls(cert_path, key_path, ca_path)?,
-                ServerCert::NativeTlsCert {
-                    pkcs12_path,
-                    pkcs12_pass,
-                } => self.tls_native_tls(pkcs12_path, pkcs12_pass)?,
-            },
-            None => None,
-        };
 
         let max_incoming_size = config.max_payload_size;
 
@@ -389,59 +415,108 @@ impl Server {
             "Waiting for connections on {}. Server = {}",
             self.config.listen, self.id
         );
+        let rng = SystemRandom::new();
+        let conn_id_seed = ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &rng).unwrap();
+        let mut clients = ClientMap::new();
+
         loop {
             // Await new network connection.
-            let (stream, addr) = match listener.accept().await {
-                Ok((s, r)) => (s, r),
-                Err(_e) => {
-                    error!("Unable to accept socket.");
+            let mut udpbuf = vec![0; 20];
+            let socket = tokio::net::UdpSocket::bind(&self.config.listen).await?;
+            let (len, addr) = socket.recv_from(&mut udpbuf).await?;
+            let pkt_buf = &mut buf[..len];
+            let hdr = match quiche::Header::from_slice(pkt_buf, quiche::MAX_CONN_ID_LEN) {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Parsing packet header failed: {:?}", e);
                     continue;
                 }
             };
+            let conn_id = ring::hmac::sign(&conn_id_seed, &hdr.dcid);
+            let conn_id = &conn_id.as_ref()[..quiche::MAX_CONN_ID_LEN];
+            let conn_id = conn_id.to_vec().into();
 
-            // Depending on TLS or not create a new Network
-            #[cfg(any(feature = "use-rustls", feature = "use-native-tls"))]
-            let network = match &acceptor {
-                Some(a) => {
-                    info!("{}. Accepting TLS connection from: {}", count, addr);
-
-                    // Depending on which acceptor we're using address accordingly..
-                    match a {
-                        #[cfg(feature = "use-rustls")]
-                        ServerTLSAcceptor::RustlsAcceptor { acceptor } => {
-                            let stream = match acceptor.accept(stream).await {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    error!("Failed to accept TLS connection using Rustls. Error = {:?}", e);
-                                    continue;
-                                }
-                            };
-
-                            Network::new(stream, max_incoming_size)
-                        }
-                        #[cfg(feature = "use-native-tls")]
-                        ServerTLSAcceptor::NativeTLSAcceptor { acceptor } => {
-                            let stream = match acceptor.accept(stream).await {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    error!("Failed to accept TLS connection using Native TLS. Error = {:?}", e);
-                                    continue;
-                                }
-                            };
-
-                            Network::new(stream, max_incoming_size)
-                        }
-                    }
+            let client = if !clients.contains_key(&hdr.dcid) && !clients.contains_key(&conn_id) {
+                if hdr.ty != quiche::Type::Initial {
+                    error!("Packet is not Initial");
+                    continue;
                 }
-                None => {
-                    info!("{}. Accepting TCP connection from: {}", count, addr);
-                    Network::new(stream, max_incoming_size)
+
+                if !quiche::version_is_supported(hdr.version) {
+                    warn!("Doing version negotiation");
+                    let len = quiche::negotiate_version(&hdr.scid, &hdr.dcid, &mut out).unwrap();
+                    let out = &out[..len];
+                    let n = socket.send_to(out, &addr).await?;
+                    if n == 0 {
+                        debug!("send() would block");
+                    };
+                    continue;
+                }
+
+                let mut scid = [0; quiche::MAX_CONN_ID_LEN];
+                scid.copy_from_slice(&conn_id);
+                let scid = quiche::ConnectionId::from_ref(&scid);
+                let token = hdr.token.as_ref().unwrap();
+                if token.is_empty() {
+                    warn!("Doing stateless retry");
+
+                    let new_token = mint_token(&hdr, &addr);
+
+                    let len = quiche::retry(
+                        &hdr.scid,
+                        &hdr.dcid,
+                        &scid,
+                        &new_token,
+                        hdr.version,
+                        &mut out,
+                    )
+                    .unwrap();
+
+                    let out = &out[..len];
+
+                    let n = socket.send_to(out, &addr).await?;
+                    if n == 0 {
+                        debug!("send() would block");
+                    };
+                    continue;
+                }
+
+                let odcid = validate_token(&addr, token);
+
+                if odcid.is_none() {
+                    error!("Invalid address validation token");
+                    continue;
+                }
+
+                if scid.len() != hdr.dcid.len() {
+                    error!("Invalid destination connection ID");
+                    continue;
+                }
+
+                let scid = hdr.dcid.clone();
+
+                debug!("New connection: dcid={:?} scid={:?}", hdr.dcid, scid);
+
+                let conn = quiche::accept(&scid, odcid.as_ref(), addr, &mut qconfig).unwrap();
+
+                let client = Client {
+                    conn,
+                    partial_responses: HashMap::new(),
+                };
+
+                clients.insert(scid.clone(), client);
+
+                clients.get_mut(&scid).unwrap()
+            } else {
+                match clients.get_mut(&hdr.dcid) {
+                    Some(v) => v,
+
+                    None => clients.get_mut(&conn_id).unwrap(),
                 }
             };
-            #[cfg(not(any(feature = "use-rustls", feature = "use-native-tls")))]
             let network = {
                 info!("{}. Accepting TCP connection from: {}", count, addr);
-                Network::new(stream, max_incoming_size)
+                Network::new(socket, max_incoming_size)
             };
 
             count += 1;
@@ -512,6 +587,45 @@ impl Connector {
         self.router_tx.send(message)?;
         Ok(())
     }
+}
+
+fn mint_token(hdr: &quiche::Header, src: &net::SocketAddr) -> Vec<u8> {
+    let mut token = Vec::new();
+
+    token.extend_from_slice(b"quiche");
+
+    let addr = match src.ip() {
+        std::net::IpAddr::V4(a) => a.octets().to_vec(),
+        std::net::IpAddr::V6(a) => a.octets().to_vec(),
+    };
+
+    token.extend_from_slice(&addr);
+    token.extend_from_slice(&hdr.dcid);
+
+    token
+}
+
+fn validate_token<'a>(src: &net::SocketAddr, token: &'a [u8]) -> Option<quiche::ConnectionId<'a>> {
+    if token.len() < 6 {
+        return None;
+    }
+
+    if &token[..6] != b"quiche" {
+        return None;
+    }
+
+    let token = &token[6..];
+
+    let addr = match src.ip() {
+        std::net::IpAddr::V4(a) => a.octets().to_vec(),
+        std::net::IpAddr::V6(a) => a.octets().to_vec(),
+    };
+
+    if token.len() < addr.len() || &token[..addr.len()] != addr.as_slice() {
+        return None;
+    }
+
+    Some(quiche::ConnectionId::from_ref(&token[addr.len()..]))
 }
 
 pub trait IO: AsyncRead + AsyncWrite + Send + Sync + Unpin {}
