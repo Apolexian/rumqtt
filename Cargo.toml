@@ -6,6 +6,5 @@ members = [
   "rumqttlog",
   "rumqttmesh",
   "rumqttd",
-  "benchmarks",
-  "quic"
+  "benchmarks"
 ]
