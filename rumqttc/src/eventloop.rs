@@ -1,4 +1,4 @@
-use crate::{framed::Network};
+use crate::framed::Network;
 use crate::{Incoming, MqttState, Packet, Request, StateError};
 use crate::{MqttOptions, Outgoing};
 
@@ -263,8 +263,13 @@ async fn connect(options: &MqttOptions) -> Result<(Network, Incoming), Connectio
 
 async fn network_connect(options: &MqttOptions) -> Result<Network, ConnectionError> {
     let network = match options.transport() {
-        _=> {
+        _ => {
             let addr = options.broker_addr.clone();
+            let addr_strs: Vec<&str> = addr.split('.').collect();
+            let mut addr_nums: Vec<u8> = Vec::new();
+            for num in addr_strs {
+                addr_nums.push(num.parse::<u8>().unwrap());
+            }
             let port = options.port;
             let qsocket = quic_socket::QuicSocket::bind(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
@@ -272,7 +277,15 @@ async fn network_connect(options: &MqttOptions) -> Result<Network, ConnectionErr
             ))
             .await
             .unwrap();
-            let addr: SocketAddr = addr.parse().unwrap();
+            let addr: SocketAddr = SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(
+                    addr_nums[0],
+                    addr_nums[1],
+                    addr_nums[2],
+                    addr_nums[3],
+                )),
+                port,
+            );
             let listener = qsocket.connect(addr).unwrap();
             Network::new(listener, options.max_incoming_packet_size)
         }
