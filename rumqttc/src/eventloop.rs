@@ -263,21 +263,18 @@ async fn connect(options: &MqttOptions) -> Result<(Network, Incoming), Connectio
 
 async fn network_connect(options: &MqttOptions) -> Result<Network, ConnectionError> {
     let network = match options.transport() {
-        Transport::Quic => {
+        _=> {
             let addr = options.broker_addr.clone();
             let port = options.port;
             let qsocket = quic_socket::QuicSocket::bind(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                8080,
+                port,
             ))
             .await
             .unwrap();
             let addr: SocketAddr = addr.parse().unwrap();
             let listener = qsocket.connect(addr).unwrap();
             Network::new(listener, options.max_incoming_packet_size)
-        }
-        _ => {
-            println!("oops")
         }
     };
 
