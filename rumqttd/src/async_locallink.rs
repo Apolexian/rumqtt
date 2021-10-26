@@ -183,11 +183,7 @@ pub fn construct_broker(
         .into_iter()
         .map(|(id, config)| {
             let router_tx = router_tx.clone();
-            async {
-                if let Err(e) = Server::new(id, config, router_tx).start().await {
-                    error!("Accept loop error: {:?}", e);
-                }
-            }
+            async { Server::new(id, config, router_tx).start().await }
         })
         .collect::<FuturesUnordered<_>>()
         .collect::<()>();

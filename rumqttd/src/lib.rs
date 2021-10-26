@@ -13,8 +13,9 @@ use tokio::time::error::Elapsed;
 use crate::remotelink::RemoteLink;
 
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpListener;
 use tokio::{task, time};
+
+use quic_socket;
 
 // All requirements for `rustls`
 #[cfg(feature = "use-rustls")]
@@ -227,11 +228,7 @@ impl Broker {
             server_thread.spawn(move || {
                 let mut runtime = tokio::runtime::Builder::new_current_thread();
                 let runtime = runtime.enable_all().build().unwrap();
-                runtime.block_on(async {
-                    if let Err(e) = server.start().await {
-                        error!("Stopping server. Accept loop error: {:?}", e.to_string());
-                    }
-                });
+                runtime.block_on(async { server.start().await });
             })?;
         }
 
@@ -359,106 +356,53 @@ impl Server {
         Err(Error::RustlsNotEnabled)
     }
 
-    async fn start(&self) -> Result<(), Error> {
-        let listener = TcpListener::bind(&self.config.listen).await?;
+    async fn start(&self) {
+        let qsocket = quic_socket::QuicSocket::bind(self.config.listen)
+            .await
+            .unwrap();
         let delay = Duration::from_millis(self.config.next_connection_delay_ms);
-        let mut count = 0;
 
         let config = Arc::new(self.config.connections.clone());
-
-        // Get the ServerTLSAcceptor which allow us to use either Rustls or Native TLS
-        #[cfg(any(feature = "use-rustls", feature = "use-native-tls"))]
-        let acceptor = match &self.config.cert {
-            Some(c) => match c {
-                ServerCert::RustlsCert {
-                    ca_path,
-                    cert_path,
-                    key_path,
-                } => self.tls_rustls(cert_path, key_path, ca_path)?,
-                ServerCert::NativeTlsCert {
-                    pkcs12_path,
-                    pkcs12_pass,
-                } => self.tls_native_tls(pkcs12_path, pkcs12_pass)?,
-            },
-            None => None,
-        };
-
         let max_incoming_size = config.max_payload_size;
 
         info!(
             "Waiting for connections on {}. Server = {}",
             self.config.listen, self.id
         );
+        let mut from = None;
         loop {
-            // Await new network connection.
-            let (stream, addr) = match listener.accept().await {
-                Ok((s, r)) => (s, r),
-                Err(_e) => {
-                    error!("Unable to accept socket.");
-                    continue;
+            match qsocket.recv_from().await {
+                Ok(v) => {
+                    from = Some(v.1);
+                    break;
                 }
-            };
-
-            // Depending on TLS or not create a new Network
-            #[cfg(any(feature = "use-rustls", feature = "use-native-tls"))]
-            let network = match &acceptor {
-                Some(a) => {
-                    info!("{}. Accepting TLS connection from: {}", count, addr);
-
-                    // Depending on which acceptor we're using address accordingly..
-                    match a {
-                        #[cfg(feature = "use-rustls")]
-                        ServerTLSAcceptor::RustlsAcceptor { acceptor } => {
-                            let stream = match acceptor.accept(stream).await {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    error!("Failed to accept TLS connection using Rustls. Error = {:?}", e);
-                                    continue;
-                                }
-                            };
-
-                            Network::new(stream, max_incoming_size)
-                        }
-                        #[cfg(feature = "use-native-tls")]
-                        ServerTLSAcceptor::NativeTLSAcceptor { acceptor } => {
-                            let stream = match acceptor.accept(stream).await {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    error!("Failed to accept TLS connection using Native TLS. Error = {:?}", e);
-                                    continue;
-                                }
-                            };
-
-                            Network::new(stream, max_incoming_size)
-                        }
+                Err(e) => {
+                    // There are no more UDP packets to read, so end the read
+                    // loop.
+                    if e.kind() == std::io::ErrorKind::WouldBlock {
+                        debug!("recv() would block");
+                        error!("recv would block");
                     }
-                }
-                None => {
-                    info!("{}. Accepting TCP connection from: {}", count, addr);
-                    Network::new(stream, max_incoming_size)
+                    panic!("recv() failed: {:?}", e);
                 }
             };
-            #[cfg(not(any(feature = "use-rustls", feature = "use-native-tls")))]
-            let network = {
-                info!("{}. Accepting TCP connection from: {}", count, addr);
-                Network::new(stream, max_incoming_size)
-            };
-
-            count += 1;
-
-            let config = config.clone();
-            let router_tx = self.router_tx.clone();
-
-            // Spawn a new thread to handle this connection.
-            task::spawn(async {
-                let connector = Connector::new(config, router_tx);
-                if let Err(e) = connector.new_connection(network).await {
-                    error!("Dropping link task!! Result = {:?}", e);
-                }
-            });
-
-            time::sleep(delay).await;
         }
+        let qlistener = qsocket.accept(from.unwrap());
+        let network = {
+            info!("Accepting QUIC connection...");
+            Network::new(qlistener.unwrap(), max_incoming_size)
+        };
+        let config = config.clone();
+        let router_tx = self.router_tx.clone();
+        // Spawn a new thread to handle this connection.
+        task::spawn(async {
+            let connector = Connector::new(config, router_tx);
+            if let Err(e) = connector.new_connection(network).await {
+                error!("Dropping link task!! Result = {:?}", e);
+            }
+        });
+
+        time::sleep(delay).await;
     }
 }
 
