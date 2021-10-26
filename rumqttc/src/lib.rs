@@ -100,14 +100,12 @@
 extern crate log;
 
 use std::fmt::{self, Debug, Formatter};
-use std::sync::Arc;
 use std::time::Duration;
 
 mod client;
 mod eventloop;
 mod framed;
 mod state;
-mod tls;
 
 pub use async_channel::{SendError, Sender, TrySendError};
 pub use client::{AsyncClient, Client, ClientError, Connection};
@@ -115,8 +113,6 @@ pub use eventloop::{ConnectionError, Event, EventLoop};
 pub use mqttbytes::v4::*;
 pub use mqttbytes::*;
 pub use state::{MqttState, StateError};
-pub use tokio_rustls::rustls::internal::pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
-pub use tokio_rustls::rustls::ClientConfig;
 
 pub type Incoming = Packet;
 
@@ -192,8 +188,7 @@ impl From<Unsubscribe> for Request {
 
 #[derive(Clone)]
 pub enum Transport {
-    Tcp,
-    Tls(TlsConfiguration),
+    Quic,
     Unix,
     #[cfg(feature = "websocket")]
     #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
@@ -205,33 +200,13 @@ pub enum Transport {
 
 impl Default for Transport {
     fn default() -> Self {
-        Self::tcp()
+        Self::quic()
     }
 }
 
 impl Transport {
-    /// Use regular tcp as transport (default)
-    pub fn tcp() -> Self {
-        Self::Tcp
-    }
-
-    /// Use secure tcp with tls as transport
-    pub fn tls(
-        ca: Vec<u8>,
-        client_auth: Option<(Vec<u8>, Key)>,
-        alpn: Option<Vec<Vec<u8>>>,
-    ) -> Self {
-        let config = TlsConfiguration::Simple {
-            ca,
-            alpn,
-            client_auth,
-        };
-
-        Self::tls_with_config(config)
-    }
-
-    pub fn tls_with_config(tls_config: TlsConfiguration) -> Self {
-        Self::Tls(tls_config)
+    pub fn quic() -> Self {
+        Self::Quic
     }
 
     pub fn unix() -> Self {
@@ -266,26 +241,6 @@ impl Transport {
     #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
     pub fn wss_with_config(tls_config: TlsConfiguration) -> Self {
         Self::Wss(tls_config)
-    }
-}
-
-#[derive(Clone)]
-pub enum TlsConfiguration {
-    Simple {
-        /// connection method
-        ca: Vec<u8>,
-        /// alpn settings
-        alpn: Option<Vec<Vec<u8>>>,
-        /// tls client_authentication
-        client_auth: Option<(Vec<u8>, Key)>,
-    },
-    /// Injected rustls ClientConfig for TLS, to allow more customisation.
-    Rustls(Arc<ClientConfig>),
-}
-
-impl From<ClientConfig> for TlsConfiguration {
-    fn from(config: ClientConfig) -> Self {
-        TlsConfiguration::Rustls(Arc::new(config))
     }
 }
 
@@ -342,7 +297,7 @@ impl MqttOptions {
         MqttOptions {
             broker_addr: host.into(),
             port,
-            transport: Transport::tcp(),
+            transport: Transport::quic(),
             keep_alive: Duration::from_secs(60),
             clean_session: true,
             client_id: id,
@@ -540,11 +495,7 @@ impl std::convert::TryFrom<url::Url> for MqttOptions {
         let broker_addr = url.host_str().unwrap_or_default().to_owned();
 
         let (transport, default_port) = match url.scheme() {
-            // Encrypted connections are supported, but require explicit TLS configuration. We fall
-            // back to the unencrypted transport layer, so that `set_transport` can be used to
-            // configure the encrypted transport layer with the provided TLS configuration.
-            "mqtts" | "ssl" => (Transport::Tcp, 8883),
-            "mqtt" | "tcp" => (Transport::Tcp, 1883),
+            "mqtt" | "tcp" => (Transport::Quic, 1883),
             _ => return Err(OptionError::Scheme),
         };
 

@@ -1,22 +1,23 @@
 use crate::{framed::Network, Transport};
-use crate::{tls, Incoming, MqttState, Packet, Request, StateError};
+use crate::{Incoming, MqttState, Packet, Request, StateError};
 use crate::{MqttOptions, Outgoing};
 
 use async_channel::{bounded, Receiver, Sender};
 #[cfg(feature = "websocket")]
 use async_tungstenite::tokio::{connect_async, connect_async_with_tls_connector};
 use mqttbytes::v4::*;
-use tokio::net::{TcpStream,UnixStream};
 use tokio::select;
 use tokio::time::{self, error::Elapsed, Instant, Sleep};
 #[cfg(feature = "websocket")]
 use ws_stream_tungstenite::WsStream;
 
 use std::io;
-use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
 use std::vec::IntoIter;
+
+use quic_socket;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// Critical errors during eventloop polling
 #[derive(Debug, thiserror::Error)]
@@ -27,8 +28,6 @@ pub enum ConnectionError {
     Timeout(#[from] Elapsed),
     #[error("Packet parsing error: {0}")]
     Mqtt4Bytes(mqttbytes::Error),
-    #[error("Network: {0}")]
-    Network(#[from] tls::Error),
     #[error("I/O: {0}")]
     Io(#[from] io::Error),
     #[error("Stream done")]
@@ -264,52 +263,21 @@ async fn connect(options: &MqttOptions) -> Result<(Network, Incoming), Connectio
 
 async fn network_connect(options: &MqttOptions) -> Result<Network, ConnectionError> {
     let network = match options.transport() {
-        Transport::Tcp => {
-            let addr = options.broker_addr.as_str();
+        Transport::Quic => {
+            let addr = options.broker_addr.clone();
             let port = options.port;
-            let socket = TcpStream::connect((addr, port)).await?;
-            Network::new(socket, options.max_incoming_packet_size)
+            let qsocket = quic_socket::QuicSocket::bind(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                8080,
+            ))
+            .await
+            .unwrap();
+            let addr: SocketAddr = addr.parse().unwrap();
+            let listener = qsocket.connect(addr).unwrap();
+            Network::new(listener, options.max_incoming_packet_size)
         }
-        Transport::Tls(tls_config) => {
-            let socket = tls::tls_connect(&options, &tls_config).await?;
-            Network::new(socket, options.max_incoming_packet_size)
-        }
-        Transport::Unix => {
-            let file = options.broker_addr.as_str();
-            let socket = UnixStream::connect(Path::new(file)).await?;
-            Network::new(socket, options.max_incoming_packet_size)
-        }
-        #[cfg(feature = "websocket")]
-        Transport::Ws => {
-            let request = http::Request::builder()
-                .method(http::Method::GET)
-                .uri(options.broker_addr.as_str())
-                .header("Sec-WebSocket-Protocol", "mqttv3.1")
-                .body(())
-                .unwrap();
-
-            let (socket, _) = connect_async(request)
-                .await
-                .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
-
-            Network::new(WsStream::new(socket), options.max_incoming_packet_size)
-        }
-        #[cfg(feature = "websocket")]
-        Transport::Wss(tls_config) => {
-            let request = http::Request::builder()
-                .method(http::Method::GET)
-                .uri(options.broker_addr.as_str())
-                .header("Sec-WebSocket-Protocol", "mqttv3.1")
-                .body(())
-                .unwrap();
-
-            let connector = tls::tls_connector(&tls_config).await?;
-
-            let (socket, _) = connect_async_with_tls_connector(request, Some(connector))
-                .await
-                .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
-
-            Network::new(WsStream::new(socket), options.max_incoming_packet_size)
+        _ => {
+            println!("oops")
         }
     };
 
