@@ -1,4 +1,4 @@
-use crate::{framed::Network, Transport};
+use crate::{framed::Network};
 use crate::{Incoming, MqttState, Packet, Request, StateError};
 use crate::{MqttOptions, Outgoing};
 
