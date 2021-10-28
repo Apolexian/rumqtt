@@ -165,7 +165,7 @@ impl Network {
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
 
-        self.socket.send(&mut write[..]).await;
+        self.socket.send(&mut write[..len]).await;
         Ok(len)
     }
 
@@ -176,7 +176,7 @@ impl Network {
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
 
-        self.socket.send(&mut write[..]).await;
+        self.socket.send(&mut write[..len]).await;
         Ok(len)
     }
 
