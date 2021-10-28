@@ -25,7 +25,7 @@ impl Network {
         let socket = Box::new(socket);
         Network {
             socket,
-            read: BytesMut::with_capacity(65535),
+            read: BytesMut::with_capacity(10 * 1024),
             max_incoming_size,
             max_readb_count: 10,
         }
@@ -97,14 +97,13 @@ impl Network {
     }
 
     pub async fn connect(&mut self, connect: Connect) -> Result<usize, io::Error> {
-        let mut write = BytesMut::with_capacity(65535);
+        let mut write = BytesMut::new();
         let len = match connect.write(&mut write) {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-
-        let idx = &write.capacity();
-        self.socket.send(&mut write[..*idx]).await;
+        
+        self.socket.send(&mut write[..]).await;
         Ok(len)
     }
 
