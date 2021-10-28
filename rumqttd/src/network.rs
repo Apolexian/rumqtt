@@ -164,8 +164,8 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-
-        self.socket.send(&mut write[..]).await;
+        let idx = &write.capacity();
+        self.socket.send(&mut write[..*idx]).await;
         Ok(len)
     }
 
@@ -175,8 +175,8 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-
-        self.socket.send(&mut write[..]).await;
+        let idx = &write.capacity();
+        self.socket.send(&mut write[..*idx]).await;
         Ok(len)
     }
 
@@ -185,7 +185,7 @@ impl Network {
             return Ok(());
         }
 
-        self.socket.send(&mut write[..]).await;
+        self.socket.send(write).await;
         write.clear();
         Ok(())
     }
