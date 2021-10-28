@@ -164,7 +164,8 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-
+        let pad = [0; 100];
+        write.extend_from_slice(& pad[..]);
         self.socket.send(&mut write[..]).await;
         Ok(len)
     }
@@ -175,8 +176,9 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-
-        self.socket.send(&mut write[..len]).await;
+        let pad = [0; 100];
+        write.extend_from_slice(& pad[..]);
+        self.socket.send(&mut write[..]).await;
         Ok(len)
     }
 
@@ -184,7 +186,8 @@ impl Network {
         if write.is_empty() {
             return Ok(());
         }
-
+        let pad = [0; 100];
+        write.extend_from_slice(& pad[..]);
         self.socket.send(&mut write[..]).await;
         write.clear();
         Ok(())
