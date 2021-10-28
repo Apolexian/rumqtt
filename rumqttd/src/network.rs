@@ -39,7 +39,7 @@ impl Network {
         let socket = Box::new(socket);
         Network {
             socket,
-            read: BytesMut::with_capacity(10 * 1024),
+            read: BytesMut::with_capacity(65535),
             max_incoming_size,
             max_readb_count: 10,
             keepalive: Duration::from_secs(0),
@@ -159,7 +159,7 @@ impl Network {
     }
 
     pub async fn _connect(&mut self, connect: Connect) -> Result<usize, io::Error> {
-        let mut write = BytesMut::new();
+        let mut write = BytesMut::with_capacity(65535);
         let len = match connect.write(&mut write) {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
@@ -170,7 +170,7 @@ impl Network {
     }
 
     pub async fn connack(&mut self, connack: ConnAck) -> Result<usize, io::Error> {
-        let mut write = BytesMut::new();
+        let mut write = BytesMut::with_capacity(65535);
         let len = match connack.write(&mut write) {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),

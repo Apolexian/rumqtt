@@ -495,7 +495,7 @@ impl std::convert::TryFrom<url::Url> for MqttOptions {
         let broker_addr = url.host_str().unwrap_or_default().to_owned();
 
         let (transport, default_port) = match url.scheme() {
-            "mqtt" | "tcp" => (Transport::Quic, 1883),
+            "mqtt" | "quic" => (Transport::Quic, 1883),
             _ => return Err(OptionError::Scheme),
         };
 
