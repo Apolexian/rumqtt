@@ -18,6 +18,7 @@ use std::vec::IntoIter;
 
 use quic_socket;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use rand::Rng;
 
 /// Critical errors during eventloop polling
 #[derive(Debug, thiserror::Error)]
@@ -271,9 +272,10 @@ async fn network_connect(options: &MqttOptions) -> Result<Network, ConnectionErr
                 addr_nums.push(num.parse::<u8>().unwrap());
             }
             let port = options.port;
+            let num: u16 = rand::thread_rng().gen_range(2000..6000);
             let qsocket = quic_socket::QuicSocket::bind(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                0,
+                num,
             ))
             .await
             .unwrap();
