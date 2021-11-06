@@ -30,7 +30,7 @@ log = "0.4"
 thiserror = "1.0.21"
 http = "^0.2"
 url = { version = "2.2", default-features = false, optional = true }
-quic-socket = {git = "https://github.com/Apolexian/QuicSocket", rev = "cd29cb1e4fe223833df7d8bda728f0a3c1ea6fc1"}
+quic-socket = "0.6.9"
 rand = "0.8"
 
 [dev-dependencies]

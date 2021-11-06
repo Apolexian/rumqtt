@@ -101,6 +101,7 @@ extern crate log;
 
 use std::fmt::{self, Debug, Formatter};
 use std::time::Duration;
+use std::net::SocketAddr;
 
 mod client;
 mod eventloop;
@@ -284,11 +285,12 @@ pub struct MqttOptions {
     last_will: Option<LastWill>,
     /// Connection timeout
     conn_timeout: u64,
+    addr: SocketAddr
 }
 
 impl MqttOptions {
     /// New mqtt options
-    pub fn new<S: Into<String>, T: Into<String>>(id: S, host: T, port: u16) -> MqttOptions {
+    pub fn new<S: Into<String>, T: Into<String>>(id: S, host: T, port: u16, addr:SocketAddr) -> MqttOptions {
         let id = id.into();
         if id.starts_with(' ') || id.is_empty() {
             panic!("Invalid client id")
@@ -310,6 +312,7 @@ impl MqttOptions {
             inflight: 100,
             last_will: None,
             conn_timeout: 5,
+            addr
         }
     }
 
@@ -628,109 +631,5 @@ impl Debug for MqttOptions {
             .field("last_will", &self.last_will)
             .field("conn_timeout", &self.conn_timeout)
             .finish()
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    #[should_panic]
-    fn client_id_startswith_space() {
-        let _mqtt_opts = MqttOptions::new(" client_a", "127.0.0.1", 1883).set_clean_session(true);
-    }
-
-    #[test]
-    #[cfg(feature = "websocket")]
-    fn no_scheme() {
-        let mut _mqtt_opts = MqttOptions::new("client_a", "a3f8czas.iot.eu-west-1.amazonaws.com/mqtt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=MyCreds%2F20201001%2Feu-west-1%2Fiotdevicegateway%2Faws4_request&X-Amz-Date=20201001T130812Z&X-Amz-Expires=7200&X-Amz-Signature=9ae09b49896f44270f2707551581953e6cac71a4ccf34c7c3415555be751b2d1&X-Amz-SignedHeaders=host", 443);
-
-        _mqtt_opts.set_transport(crate::Transport::wss(Vec::from("Test CA"), None, None));
-
-        if let crate::Transport::Wss(TlsConfiguration::Simple {
-            ca,
-            client_auth,
-            alpn,
-        }) = _mqtt_opts.transport
-        {
-            assert_eq!(ca, Vec::from("Test CA"));
-            assert_eq!(client_auth, None);
-            assert_eq!(alpn, None);
-        } else {
-            panic!("Unexpected transport!");
-        }
-
-        assert_eq!(_mqtt_opts.broker_addr, "a3f8czas.iot.eu-west-1.amazonaws.com/mqtt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=MyCreds%2F20201001%2Feu-west-1%2Fiotdevicegateway%2Faws4_request&X-Amz-Date=20201001T130812Z&X-Amz-Expires=7200&X-Amz-Signature=9ae09b49896f44270f2707551581953e6cac71a4ccf34c7c3415555be751b2d1&X-Amz-SignedHeaders=host");
-    }
-
-    #[test]
-    #[cfg(feature = "url")]
-    fn from_url() {
-        use std::convert::TryInto;
-        use std::str::FromStr;
-
-        fn opt(s: &str) -> Result<MqttOptions, OptionError> {
-            url::Url::from_str(s).expect("valid url").try_into()
-        }
-        fn ok(s: &str) -> MqttOptions {
-            opt(s).expect("valid options")
-        }
-        fn err(s: &str) -> OptionError {
-            opt(s).expect_err("invalid options")
-        }
-
-        let v = ok("mqtt://host:42?client_id=foo");
-        assert_eq!(v.broker_address(), ("host".to_owned(), 42));
-        assert_eq!(v.client_id(), "foo".to_owned());
-
-        assert_eq!(err("mqtt://host:42"), OptionError::ClientId);
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&foo=bar"),
-            OptionError::Unknown("foo".to_owned())
-        );
-        assert_eq!(err("mqt://host:42?client_id=foo"), OptionError::Scheme);
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&keep_alive_secs=foo"),
-            OptionError::KeepAlive
-        );
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&clean_session=foo"),
-            OptionError::CleanSession
-        );
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&max_incoming_packet_size_bytes=foo"),
-            OptionError::MaxIncomingPacketSize
-        );
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&max_outgoing_packet_size_bytes=foo"),
-            OptionError::MaxOutgoingPacketSize
-        );
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&request_channel_capacity_num=foo"),
-            OptionError::RequestChannelCapacity
-        );
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&max_request_batch_num=foo"),
-            OptionError::MaxRequestBatch
-        );
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&pending_throttle_usecs=foo"),
-            OptionError::PendingThrottle
-        );
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&inflight_num=foo"),
-            OptionError::Inflight
-        );
-        assert_eq!(
-            err("mqtt://host:42?client_id=foo&conn_timeout_secs=foo"),
-            OptionError::ConnTimeout
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn no_client_id() {
-        let _mqtt_opts = MqttOptions::new("", "127.0.0.1", 1883).set_clean_session(true);
     }
 }

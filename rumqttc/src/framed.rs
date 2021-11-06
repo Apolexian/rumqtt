@@ -3,8 +3,8 @@ use mqttbytes::v4::*;
 use mqttbytes::*;
 
 use crate::{Incoming, MqttState, StateError};
-use std::io;
 use quic_socket;
+use std::io;
 
 /// Network transforms packets <-> frames efficiently. It takes
 /// advantage of pre-allocation, buffering and vectorization when
@@ -35,7 +35,7 @@ impl Network {
     async fn read_bytes(&mut self, required: usize) -> io::Result<usize> {
         let mut total_read = 0;
         loop {
-            let read = self.socket.recv(&mut self.read).await?;
+            let read = self.socket.recv(&mut self.read[..], 0).unwrap();
             if 0 == read {
                 return if self.read.is_empty() {
                     Err(io::Error::new(
@@ -102,8 +102,9 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-       
-        self.socket.send(&mut write[..]).await;
+        self.socket
+            .send(self.socket.addr, &mut write[..len], 0, false)
+            .unwrap();
         Ok(len)
     }
 
@@ -111,8 +112,9 @@ impl Network {
         if write.is_empty() {
             return Ok(());
         }
-       
-        self.socket.send(&mut write[..]).await;
+        self.socket
+            .send(self.socket.addr, &mut write[..], 0, false)
+            .unwrap();
         write.clear();
         Ok(())
     }

@@ -16,22 +16,6 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::{task, time};
 
 use quic_socket;
-
-// All requirements for `rustls`
-#[cfg(feature = "use-rustls")]
-use tokio_rustls::rustls::internal::pemfile::{certs, rsa_private_keys};
-#[cfg(feature = "use-rustls")]
-use tokio_rustls::rustls::{
-    AllowAnyAuthenticatedClient, RootCertStore, ServerConfig, TLSError as RustlsError,
-};
-
-// All requirements for `native-tls`
-#[cfg(feature = "use-native-tls")]
-use std::io::Read;
-#[cfg(feature = "use-native-tls")]
-use tokio_native_tls::native_tls;
-#[cfg(feature = "use-native-tls")]
-use tokio_native_tls::native_tls::Error as NativeTlsError;
 pub mod async_locallink;
 mod consolelink;
 mod locallink;
@@ -42,14 +26,8 @@ mod state;
 use crate::consolelink::ConsoleLink;
 pub use crate::locallink::{LinkError, LinkRx, LinkTx};
 use crate::network::Network;
-#[cfg(feature = "use-rustls")]
-use crate::Error::ServerKeyNotFound;
-use std::collections::HashMap;
 
-#[cfg(any(feature = "use-rustls", feature = "use-native-tls"))]
-use std::fs::File;
-#[cfg(feature = "use-rustls")]
-use std::io::BufReader;
+use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Acceptor error")]
@@ -64,12 +42,6 @@ pub enum Error {
     Recv(#[from] RecvError),
     #[error("Channel send error")]
     Send(#[from] SendError<(Id, Event)>),
-    #[cfg(feature = "use-native-tls")]
-    #[error("Native TLS error {0}")]
-    NativeTls(#[from] NativeTlsError),
-    #[cfg(feature = "use-rustls")]
-    #[error("Rustls error {0}")]
-    Rustls(#[from] RustlsError),
     #[error("Server cert not provided")]
     ServerCertRequired,
     #[error("Server private key not provided")]
@@ -261,105 +233,8 @@ impl Server {
         }
     }
 
-    #[cfg(feature = "use-native-tls")]
-    fn tls_native_tls(
-        &self,
-        pkcs12_path: &String,
-        pkcs12_pass: &String,
-    ) -> Result<Option<ServerTLSAcceptor>, Error> {
-        // Get certificates
-        let cert_file = File::open(&pkcs12_path);
-        let mut cert_file =
-            cert_file.map_err(|_| Error::ServerCertNotFound(pkcs12_path.clone()))?;
-
-        // Read cert into memory
-        let mut buf = Vec::new();
-        cert_file
-            .read_to_end(&mut buf)
-            .map_err(|_| Error::InvalidServerCert(pkcs12_path.clone()))?;
-
-        // Get the identity
-        let identity = native_tls::Identity::from_pkcs12(&buf, &pkcs12_pass)
-            .map_err(|_| Error::InvalidServerPass())?;
-
-        // Builder
-        let builder = native_tls::TlsAcceptor::builder(identity).build()?;
-
-        // Create acceptor
-        let acceptor = tokio_native_tls::TlsAcceptor::from(builder);
-        Ok(Some(ServerTLSAcceptor::NativeTLSAcceptor { acceptor }))
-    }
-
-    #[allow(dead_code)]
-    #[cfg(not(feature = "use-native-tls"))]
-    fn tls_native_tls(
-        &self,
-        _pkcs12_path: &String,
-        _pkcs12_pass: &String,
-    ) -> Result<Option<ServerTLSAcceptor>, Error> {
-        Err(Error::NativeTlsNotEnabled)
-    }
-
-    #[cfg(feature = "use-rustls")]
-    fn tls_rustls(
-        &self,
-        cert_path: &String,
-        key_path: &String,
-        ca_path: &String,
-    ) -> Result<Option<ServerTLSAcceptor>, Error> {
-        let (certs, key) = {
-            // Get certificates
-            let cert_file = File::open(&cert_path);
-            let cert_file = cert_file.map_err(|_| Error::ServerCertNotFound(cert_path.clone()))?;
-            let certs = certs(&mut BufReader::new(cert_file));
-            let certs = certs.map_err(|_| Error::InvalidServerCert(cert_path.to_string()))?;
-
-            // Get private key
-            let key_file = File::open(&key_path);
-            let key_file = key_file.map_err(|_| ServerKeyNotFound(key_path.clone()))?;
-            let keys = rsa_private_keys(&mut BufReader::new(key_file));
-            let keys = keys.map_err(|_| Error::InvalidServerKey(key_path.clone()))?;
-
-            // Get the first key
-            let key = match keys.first() {
-                Some(k) => k.clone(),
-                None => return Err(Error::InvalidServerKey(key_path.clone())),
-            };
-
-            (certs, key)
-        };
-
-        // client authentication with a CA. CA isn't required otherwise
-        let mut server_config = {
-            let ca_file = File::open(ca_path);
-            let ca_file = ca_file.map_err(|_| Error::CaFileNotFound(ca_path.clone()))?;
-            let ca_file = &mut BufReader::new(ca_file);
-            let mut store = RootCertStore::empty();
-            let o = store.add_pem_file(ca_file);
-            o.map_err(|_| Error::InvalidCACert(ca_path.to_string()))?;
-            ServerConfig::new(AllowAnyAuthenticatedClient::new(store))
-        };
-
-        server_config.set_single_cert(certs, key)?;
-        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config));
-        Ok(Some(ServerTLSAcceptor::RustlsAcceptor { acceptor }))
-    }
-
-    #[allow(dead_code)]
-    #[cfg(not(feature = "use-rustls"))]
-    fn tls_rustls(
-        &self,
-        _cert_path: &String,
-        _key_path: &String,
-        _ca_path: &String,
-    ) -> Result<Option<ServerTLSAcceptor>, Error> {
-        Err(Error::RustlsNotEnabled)
-    }
-
     async fn start(&self) {
-        let qsocket = quic_socket::QuicSocket::bind(self.config.listen)
-            .await
-            .unwrap();
+        let qsocket = quic_socket::QuicListener::new(self.config.listen);
         let delay = Duration::from_millis(self.config.next_connection_delay_ms);
 
         let config = Arc::new(self.config.connections.clone());
@@ -369,29 +244,7 @@ impl Server {
             "Waiting for connections on {}. Server = {}",
             self.config.listen, self.id
         );
-        let mut from = None;
-        loop {
-            match qsocket.recv_from().await {
-                Ok(v) => {
-                    from = Some(v.1);
-                    break;
-                }
-                Err(e) => {
-                    // There are no more UDP packets to read, so end the read
-                    // loop.
-                    if e.kind() == std::io::ErrorKind::WouldBlock {
-                        debug!("recv() would block");
-                        error!("recv would block");
-                    }
-                    panic!("recv() failed: {:?}", e);
-                }
-            };
-        }
-        let qlistener = qsocket.accept(from.unwrap());
-        let network = {
-            info!("Accepting QUIC connection...");
-            Network::new(qlistener.unwrap(), max_incoming_size)
-        };
+        let network = { Network::new(qsocket.unwrap(), max_incoming_size) };
         let config = config.clone();
         let router_tx = self.router_tx.clone();
         // Spawn a new thread to handle this connection.
