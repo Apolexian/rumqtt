@@ -48,7 +48,7 @@ impl Connect {
                               + 1            // connect flags
                               + 2; // keep alive
 
-        len += 2 + self.client_id.len() + 100;
+        len += 2 + self.client_id.len();
 
         // last will len
         if let Some(last_will) = &self.last_will {
