@@ -101,7 +101,7 @@ extern crate log;
 
 use std::fmt::{self, Debug, Formatter};
 use std::time::Duration;
-use std::net::SocketAddr;
+use url::Url;
 
 mod client;
 mod eventloop;
@@ -285,12 +285,15 @@ pub struct MqttOptions {
     last_will: Option<LastWill>,
     /// Connection timeout
     conn_timeout: u64,
-    addr: SocketAddr
+    path: String,
+    ca: String,
+    remote: Url,
+    host1: Option<String>
 }
 
 impl MqttOptions {
     /// New mqtt options
-    pub fn new<S: Into<String>, T: Into<String>>(id: S, host: T, port: u16, addr:SocketAddr) -> MqttOptions {
+    pub fn new<S: Into<String>, T: Into<String>>(id: S, host: T, port: u16, path:String, ca: String, remote: Url, host1:Option<String>) -> MqttOptions {
         let id = id.into();
         if id.starts_with(' ') || id.is_empty() {
             panic!("Invalid client id")
@@ -312,7 +315,10 @@ impl MqttOptions {
             inflight: 100,
             last_will: None,
             conn_timeout: 5,
-            addr
+            path,
+            ca,
+            remote,
+            host1
         }
     }
 

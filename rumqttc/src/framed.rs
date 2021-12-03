@@ -3,28 +3,39 @@ use mqttbytes::v4::*;
 use mqttbytes::*;
 
 use crate::{Incoming, MqttState, StateError};
-use quic_socket;
+use quic_socket::QuicListener;
 use std::io;
-
+use std::net::SocketAddr;
+use url::Url;
 /// Network transforms packets <-> frames efficiently. It takes
 /// advantage of pre-allocation, buffering and vectorization when
 /// appropriate to achieve performance
 pub struct Network {
-    /// Socket for IO
-    socket: Box<quic_socket::QuicListener>,
-    /// Buffered reads
+    addr: SocketAddr,
+    path: String,
+    ca: String,
+    remote: Url,
+    host: Option<String>,
     read: BytesMut,
-    /// Maximum packet size
     max_incoming_size: usize,
-    /// Maximum readv count
     max_readb_count: usize,
 }
 
 impl Network {
-    pub fn new(socket: quic_socket::QuicListener, max_incoming_size: usize) -> Network {
-        let socket = Box::new(socket);
+    pub fn new(
+        addr: SocketAddr,
+        max_incoming_size: usize,
+        path: String,
+        ca: String,
+        remote: Url,
+        host: Option<String>,
+    ) -> Network {
         Network {
-            socket,
+            addr,
+            path,
+            ca,
+            remote,
+            host,
             read: BytesMut::with_capacity(10 * 1024),
             max_incoming_size,
             max_readb_count: 10,
@@ -35,8 +46,11 @@ impl Network {
     async fn read_bytes(&mut self, required: usize) -> io::Result<usize> {
         let mut total_read = 0;
         loop {
-            let read = self.socket.recv(&mut self.read[..], 0).unwrap();
-            if 0 == read {
+            let read = QuicListener::recv(self.addr, self.path.clone())
+                .await
+                .unwrap();
+            let read_len = read.len();
+            if 0 == read_len {
                 return if self.read.is_empty() {
                     Err(io::Error::new(
                         io::ErrorKind::ConnectionAborted,
@@ -50,7 +64,7 @@ impl Network {
                 };
             }
 
-            total_read += read;
+            total_read += read_len;
             if total_read >= required {
                 return Ok(total_read);
             }
@@ -102,8 +116,8 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-        self.socket
-            .send(self.socket.addr, &mut write[..len], 0, false)
+        QuicListener::send(self.ca.clone(), self.remote.clone(), self.host.clone(), &mut write[..])
+            .await
             .unwrap();
         Ok(len)
     }
@@ -112,8 +126,8 @@ impl Network {
         if write.is_empty() {
             return Ok(());
         }
-        self.socket
-            .send(self.socket.addr, &mut write[..], 0, false)
+        QuicListener::send(self.ca.clone(), self.remote.clone(), self.host.clone(), &mut write[..])
+            .await
             .unwrap();
         write.clear();
         Ok(())
