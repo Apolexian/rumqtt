@@ -1,4 +1,4 @@
-use bytes::BytesMut;
+use bytes::{BufMut, BytesMut};
 use mqttbytes::v4::*;
 use mqttbytes::*;
 
@@ -49,6 +49,9 @@ impl Network {
             let read = QuicListener::recv(self.addr, self.path.clone())
                 .await
                 .unwrap();
+            let mut bytes_read = BytesMut::new();
+            bytes_read.put(read.as_slice());
+            self.read = bytes_read;
             let read_len = read.len();
             if 0 == read_len {
                 return if self.read.is_empty() {
@@ -116,9 +119,14 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-        QuicListener::send(self.ca.clone(), self.remote.clone(), self.host.clone(), &mut write[..])
-            .await
-            .unwrap();
+        QuicListener::send(
+            self.ca.clone(),
+            self.remote.clone(),
+            self.host.clone(),
+            &mut write[..],
+        )
+        .await
+        .unwrap();
         Ok(len)
     }
 
@@ -126,9 +134,14 @@ impl Network {
         if write.is_empty() {
             return Ok(());
         }
-        QuicListener::send(self.ca.clone(), self.remote.clone(), self.host.clone(), &mut write[..])
-            .await
-            .unwrap();
+        QuicListener::send(
+            self.ca.clone(),
+            self.remote.clone(),
+            self.host.clone(),
+            &mut write[..],
+        )
+        .await
+        .unwrap();
         write.clear();
         Ok(())
     }
