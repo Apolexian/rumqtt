@@ -30,7 +30,7 @@ log = "0.4"
 thiserror = "1.0.21"
 http = "^0.2"
 url = { version = "2.2.2" }
-quic-socket = "0.7.0"
+quic-socket = "0.7.1"
 rand = "0.8"
 
 [dev-dependencies]

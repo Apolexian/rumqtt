@@ -16,6 +16,8 @@ use std::pin::Pin;
 use std::time::Duration;
 use std::vec::IntoIter;
 
+use quic_socket::{QuicClient, QuicMessage, QuicServer, QuicSocket};
+
 /// Critical errors during eventloop polling
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionError {
@@ -260,14 +262,11 @@ async fn connect(options: &MqttOptions) -> Result<(Network, Incoming), Connectio
 
 async fn network_connect(options: &MqttOptions) -> Result<Network, ConnectionError> {
     let addr = "127.0.0.1:4442".parse().unwrap();
-    let network = Network::new(
-        addr,
-        options.max_incoming_packet_size,
-        options.path.clone(),
-        options.ca.clone(),
-        options.remote.clone(),
-        options.host1.clone(),
-    );
+    let msg = QuicMessage {
+        client: QuicClient::new(None),
+        server: QuicServer::new(Some(addr)),
+    };
+    let network = Network::new(msg, options.max_incoming_packet_size);
     Ok(network)
 }
 

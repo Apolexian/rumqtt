@@ -3,39 +3,22 @@ use mqttbytes::v4::*;
 use mqttbytes::*;
 
 use crate::{Incoming, MqttState, StateError};
-use quic_socket::QuicListener;
+use quic_socket::{QuicMessage, QuicSocket};
 use std::io;
-use std::net::SocketAddr;
-use url::Url;
 /// Network transforms packets <-> frames efficiently. It takes
 /// advantage of pre-allocation, buffering and vectorization when
 /// appropriate to achieve performance
 pub struct Network {
-    addr: SocketAddr,
-    path: String,
-    ca: String,
-    remote: Url,
-    host: Option<String>,
+    quic: QuicMessage,
     read: BytesMut,
     max_incoming_size: usize,
     max_readb_count: usize,
 }
 
 impl Network {
-    pub fn new(
-        addr: SocketAddr,
-        max_incoming_size: usize,
-        path: String,
-        ca: String,
-        remote: Url,
-        host: Option<String>,
-    ) -> Network {
+    pub fn new(quic: QuicMessage, max_incoming_size: usize) -> Network {
         Network {
-            addr,
-            path,
-            ca,
-            remote,
-            host,
+            quic,
             read: BytesMut::with_capacity(10 * 1024),
             max_incoming_size,
             max_readb_count: 10,
@@ -46,9 +29,7 @@ impl Network {
     async fn read_bytes(&mut self, required: usize) -> io::Result<usize> {
         let mut total_read = 0;
         loop {
-            let read = QuicListener::recv(self.addr, self.path.clone())
-                .await
-                .unwrap();
+            let read = self.quic.server.recv().await.unwrap();
             let mut bytes_read = BytesMut::new();
             bytes_read.put(read.as_slice());
             self.read = bytes_read;
@@ -119,14 +100,7 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-        QuicListener::send(
-            self.ca.clone(),
-            self.remote.clone(),
-            self.host.clone(),
-            &mut write[..],
-        )
-        .await
-        .unwrap();
+        self.quic.client.send(write[..].to_vec()).await.unwrap();
         Ok(len)
     }
 
@@ -134,14 +108,7 @@ impl Network {
         if write.is_empty() {
             return Ok(());
         }
-        QuicListener::send(
-            self.ca.clone(),
-            self.remote.clone(),
-            self.host.clone(),
-            &mut write[..],
-        )
-        .await
-        .unwrap();
+        self.quic.client.send(write[..].to_vec()).await.unwrap();
         write.clear();
         Ok(())
     }
