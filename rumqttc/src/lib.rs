@@ -285,10 +285,6 @@ pub struct MqttOptions {
     last_will: Option<LastWill>,
     /// Connection timeout
     conn_timeout: u64,
-    path: String,
-    ca: String,
-    remote: Url,
-    host1: Option<String>
 }
 
 impl MqttOptions {
