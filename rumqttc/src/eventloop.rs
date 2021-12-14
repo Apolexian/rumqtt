@@ -261,10 +261,9 @@ async fn connect(options: &MqttOptions) -> Result<(Network, Incoming), Connectio
 }
 
 async fn network_connect(options: &MqttOptions) -> Result<Network, ConnectionError> {
-    let addr = "127.0.0.1:4442".parse().unwrap();
     let msg = QuicMessage {
         client: QuicClient::new(None),
-        server: QuicServer::new(Some(addr)),
+        server: QuicServer::new(Some(options.addr)),
     };
     let network = Network::new(msg, options.max_incoming_packet_size);
     Ok(network)
