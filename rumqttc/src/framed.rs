@@ -29,7 +29,7 @@ impl Network {
     async fn read_bytes(&mut self, required: usize) -> io::Result<usize> {
         let mut total_read = 0;
         loop {
-            let read = self.quic.recv(&mut self.read[..]).await.unwrap();
+            let read = self.quic.recv(&mut self.read).await.unwrap();
             total_read += read;
             if total_read >= required {
                 return Ok(total_read);
