@@ -28,10 +28,8 @@ impl Network {
     /// Reads more than 'required' bytes to frame a packet into self.read buffer
     async fn read_bytes(&mut self, required: usize) -> io::Result<usize> {
         let mut total_read = 0;
-        let mut buf = [0; 200];
         loop {
-            let read = self.quic.recv(&mut buf[..]).await.unwrap();
-            self.read.extend_from_slice(&buf[..]);
+            let read = self.quic.recv(&mut self.read).await.unwrap();
             if 0 == read {
                 return if self.read.is_empty() {
                     Err(io::Error::new(
@@ -53,7 +51,6 @@ impl Network {
     }
 
     pub async fn read(&mut self) -> Result<Incoming, io::Error> {
-        self.read.clear();
         loop {
             let required = match read(&mut self.read, self.max_incoming_size) {
                 Ok(packet) => return Ok(packet),
@@ -72,7 +69,7 @@ impl Network {
     pub async fn readb(&mut self, state: &mut MqttState) -> Result<(), StateError> {
         let mut count = 0;
         loop {
-            
+
             match read(&mut self.read, self.max_incoming_size) {
                 Ok(packet) => {
                     state.handle_incoming_packet(packet)?;
