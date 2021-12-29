@@ -38,7 +38,7 @@ bytes = "1.0"
 warp = "0.3"
 futures-util = "0.3.8"
 pprof = { version = "0.4", features = ["flamegraph", "protobuf"], optional = true }
-quic-socket = "0.7.1"
+quic-socket = "0.7.2"
 
 # Optional
 tokio-rustls = { version = "0.22", optional = true }

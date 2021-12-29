@@ -1,22 +1,22 @@
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use mqttbytes::v4::*;
 use mqttbytes::*;
 
 use crate::{Incoming, MqttState, StateError};
-use quic_socket::{QuicMessage, QuicSocket};
+use quic_socket::{QuicClient, QuicSocket};
 use std::io;
 /// Network transforms packets <-> frames efficiently. It takes
 /// advantage of pre-allocation, buffering and vectorization when
 /// appropriate to achieve performance
 pub struct Network {
-    quic: QuicMessage,
+    quic: QuicClient,
     read: BytesMut,
     max_incoming_size: usize,
     max_readb_count: usize,
 }
 
 impl Network {
-    pub fn new(quic: QuicMessage, max_incoming_size: usize) -> Network {
+    pub fn new(quic: QuicClient, max_incoming_size: usize) -> Network {
         Network {
             quic,
             read: BytesMut::with_capacity(10 * 1024),
@@ -29,12 +29,8 @@ impl Network {
     async fn read_bytes(&mut self, required: usize) -> io::Result<usize> {
         let mut total_read = 0;
         loop {
-            let read = self.quic.server.recv().await.unwrap();
-            let mut bytes_read = BytesMut::new();
-            bytes_read.put(read.as_slice());
-            self.read = bytes_read;
-            let read_len = read.len();
-            if 0 == read_len {
+            let read = self.quic.recv(&mut self.read[..]).await.unwrap();
+            if 0 == read {
                 return if self.read.is_empty() {
                     Err(io::Error::new(
                         io::ErrorKind::ConnectionAborted,
@@ -48,7 +44,7 @@ impl Network {
                 };
             }
 
-            total_read += read_len;
+            total_read += read;
             if total_read >= required {
                 return Ok(total_read);
             }
@@ -100,7 +96,7 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-        self.quic.client.send(write[..].to_vec()).await.unwrap();
+        self.quic.send(write[..].to_vec()).await.unwrap();
         Ok(len)
     }
 
@@ -108,7 +104,7 @@ impl Network {
         if write.is_empty() {
             return Ok(());
         }
-        self.quic.client.send(write[..].to_vec()).await.unwrap();
+        self.quic.send(write[..].to_vec()).await.unwrap();
         write.clear();
         Ok(())
     }

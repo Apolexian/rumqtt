@@ -1,4 +1,4 @@
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use mqttbytes::v4::*;
 
 use crate::state;
@@ -6,7 +6,7 @@ use crate::state::State;
 use std::io::{self, ErrorKind};
 use tokio::time::{self, error::Elapsed, Duration};
 
-use quic_socket::{QuicMessage, QuicSocket};
+use quic_socket::{QuicServer, QuicSocket};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -25,7 +25,7 @@ pub enum Error {
 /// appropriate to achieve performance
 pub struct Network {
     /// Socket for IO
-    quic: QuicMessage,
+    quic: QuicServer,
     /// Buffered reads
     read: BytesMut,
     /// Maximum packet size
@@ -36,7 +36,7 @@ pub struct Network {
 }
 
 impl Network {
-    pub fn new(quic: QuicMessage, max_incoming_size: usize) -> Network {
+    pub fn new(quic: QuicServer, max_incoming_size: usize) -> Network {
         Network {
             quic,
             read: BytesMut::with_capacity(10 * 1024),
@@ -55,12 +55,8 @@ impl Network {
     async fn read_bytes(&mut self, required: usize) -> io::Result<usize> {
         let mut total_read = 0;
         loop {
-            let read = self.quic.server.recv().await.unwrap();
-            let mut bytes_read = BytesMut::new();
-            bytes_read.put(read.as_slice());
-            self.read = bytes_read;
-            let read_len = read.len();
-            if 0 == read_len {
+            let read = self.quic.recv(&mut self.read[..]).await.unwrap();
+            if 0 == read {
                 return if self.read.is_empty() {
                     Err(io::Error::new(
                         ErrorKind::ConnectionAborted,
@@ -73,8 +69,7 @@ impl Network {
                     ))
                 };
             }
-
-            total_read += read_len;
+            total_read += read;
             if total_read >= required {
                 return Ok(total_read);
             }
@@ -169,7 +164,7 @@ impl Network {
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
 
-        self.quic.client.send(write[..].to_vec()).await.unwrap();
+        self.quic.send(write[..].to_vec()).await.unwrap();
         Ok(len)
     }
 
@@ -180,7 +175,7 @@ impl Network {
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
 
-        self.quic.client.send(write[..].to_vec()).await.unwrap();
+        self.quic.send(write[..].to_vec()).await.unwrap();
         Ok(len)
     }
 
@@ -189,7 +184,7 @@ impl Network {
             return Ok(());
         }
 
-        self.quic.client.send(write[..].to_vec()).await.unwrap();
+        self.quic.send(write[..].to_vec()).await.unwrap();
         write.clear();
         Ok(())
     }

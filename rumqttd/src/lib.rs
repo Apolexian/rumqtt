@@ -15,7 +15,7 @@ use crate::remotelink::RemoteLink;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::{task, time};
 
-use quic_socket::{QuicClient, QuicMessage, QuicServer, QuicSocket};
+use quic_socket::{QuicClient, QuicServer, QuicSocket};
 pub mod async_locallink;
 mod consolelink;
 mod locallink;
@@ -235,12 +235,8 @@ impl Server {
 
     async fn start(&self) {
         let addr = "127.0.0.1:4442".parse().unwrap();
-        let msg = QuicMessage {
-            client: QuicClient::new(None),
-            server: QuicServer::new(Some(addr)),
-        };
+        let server = QuicServer::new(Some(addr)).await;
         let delay = Duration::from_millis(self.config.next_connection_delay_ms);
-
         let config = Arc::new(self.config.connections.clone());
         let max_incoming_size = config.max_payload_size;
 
@@ -248,7 +244,7 @@ impl Server {
             "Waiting for connections on {}. Server = {}",
             self.config.listen, self.id
         );
-        let network = { Network::new(msg, max_incoming_size) };
+        let network = { Network::new(server, max_incoming_size) };
         let config = config.clone();
         let router_tx = self.router_tx.clone();
         // Spawn a new thread to handle this connection.
