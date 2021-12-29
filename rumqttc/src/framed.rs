@@ -21,7 +21,7 @@ impl Network {
             quic,
             read: BytesMut::with_capacity(10 * 1024),
             max_incoming_size,
-            max_readb_count: 10,
+            max_readb_count: 20,
         }
     }
 
