@@ -16,8 +16,6 @@ use std::pin::Pin;
 use std::time::Duration;
 use std::vec::IntoIter;
 
-use quic_socket::{QuicClient, QuicSocket};
-
 /// Critical errors during eventloop polling
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionError {
@@ -118,7 +116,7 @@ impl EventLoop {
     #[must_use = "Eventloop should be iterated over a loop to make progress"]
     pub async fn poll(&mut self) -> Result<Event, ConnectionError> {
         if self.network.is_none() {
-            let (network, connack) = connect_or_cancel(&self.options, &self.cancel_rx).await?;
+            let (network, connack) = connect_or_cancel(&mut self.options, &self.cancel_rx).await?;
             self.network = Some(network);
 
             if self.keepalive_timeout.is_none() {
@@ -219,7 +217,7 @@ impl EventLoop {
 }
 
 async fn connect_or_cancel(
-    options: &MqttOptions,
+    options: &mut MqttOptions,
     cancel_rx: &Receiver<()>,
 ) -> Result<(Network, Incoming), ConnectionError> {
     // select here prevents cancel request from being blocked until connection request is
@@ -237,7 +235,7 @@ async fn connect_or_cancel(
 /// the stream.
 /// This function (for convenience) includes internal delays for users to perform internal sleeps
 /// between re-connections so that cancel semantics can be used during this sleep
-async fn connect(options: &MqttOptions) -> Result<(Network, Incoming), ConnectionError> {
+async fn connect(options: &mut MqttOptions) -> Result<(Network, Incoming), ConnectionError> {
     // connect to the broker
     let mut network = match network_connect(options).await {
         Ok(network) => network,
@@ -260,9 +258,9 @@ async fn connect(options: &MqttOptions) -> Result<(Network, Incoming), Connectio
     Ok((network, packet))
 }
 
-async fn network_connect(options: &MqttOptions) -> Result<Network, ConnectionError> {
-    let client = QuicClient::new(None).await;
-    let network = Network::new(client, options.max_incoming_packet_size);
+async fn network_connect(options: &mut MqttOptions) -> Result<Network, ConnectionError> {
+    let client = options.client.take();
+    let network = Network::new(client.unwrap(), options.max_incoming_packet_size);
     Ok(network)
 }
 

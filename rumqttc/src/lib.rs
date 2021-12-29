@@ -102,6 +102,7 @@ extern crate log;
 use std::fmt::{self, Debug, Formatter};
 use std::time::Duration;
 use std::net::SocketAddr;
+use quic_socket::QuicClient;
 
 mod client;
 mod eventloop;
@@ -249,7 +250,6 @@ impl Transport {
 // would be loosing the ability to panic when the user options
 // are wrong (e.g empty client id) or aggressive (keep alive time)
 /// Options to configure the behaviour of mqtt connection
-#[derive(Clone)]
 pub struct MqttOptions {
     /// broker address that you want to connect to
     broker_addr: String,
@@ -285,12 +285,13 @@ pub struct MqttOptions {
     last_will: Option<LastWill>,
     /// Connection timeout
     conn_timeout: u64,
-    addr: SocketAddr
+    addr: SocketAddr,
+    client: Option<QuicClient>
 }
 
 impl MqttOptions {
     /// New mqtt options
-    pub fn new<S: Into<String>, T: Into<String>>(id: S, host: T, port: u16, addr: SocketAddr) -> MqttOptions {
+    pub fn new<S: Into<String>, T: Into<String>>(id: S, host: T, port: u16, addr: SocketAddr, client: QuicClient) -> MqttOptions {
         let id = id.into();
         if id.starts_with(' ') || id.is_empty() {
             panic!("Invalid client id")
@@ -312,7 +313,8 @@ impl MqttOptions {
             inflight: 100,
             last_will: None,
             conn_timeout: 5,
-            addr
+            addr,
+            client: Some(client)
         }
     }
 
