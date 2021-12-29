@@ -32,7 +32,7 @@ impl Network {
         loop {
             let read = self.quic.recv(&mut buf[..]).await.unwrap();
             self.read.clear();
-            self.read.extend_from_slice(&mut buf[..]);
+            self.read.extend_from_slice(&mut buf[..read]);
             if 0 == read {
                 return if self.read.is_empty() {
                     Err(io::Error::new(
