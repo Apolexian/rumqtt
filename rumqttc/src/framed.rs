@@ -28,8 +28,11 @@ impl Network {
     /// Reads more than 'required' bytes to frame a packet into self.read buffer
     async fn read_bytes(&mut self, required: usize) -> io::Result<usize> {
         let mut total_read = 0;
+        let mut buf = [0;200];
         loop {
-            let read = self.quic.recv(&mut self.read).await.unwrap();
+            let read = self.quic.recv(&mut buf[..]).await.unwrap();
+            self.read.clear();
+            self.read.extend_from_slice(&mut buf[..]);
             if 0 == read {
                 return if self.read.is_empty() {
                     Err(io::Error::new(
