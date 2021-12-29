@@ -17,12 +17,9 @@ pub struct Network {
 
 impl Network {
     pub fn new(quic: QuicClient, max_incoming_size: usize) -> Network {
-        let mut buf = BytesMut::with_capacity(10 * 1024);
-        let mut slice = [0; 10 * 1024];
-        buf.extend_from_slice(&mut slice[..]);
         Network {
             quic,
-            read: buf,
+            read: BytesMut::with_capacity(10 * 1024),
             max_incoming_size,
             max_readb_count: 10,
         }
