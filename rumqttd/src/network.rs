@@ -56,6 +56,19 @@ impl Network {
         let mut total_read = 0;
         loop {
             let read = self.quic.recv(&mut self.read).await.unwrap();
+            if 0 == read {
+                return if self.read.is_empty() {
+                    Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        "connection closed by peer",
+                    ))
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "connection reset by peer",
+                    ))
+                };
+            }
             total_read += read;
             if total_read >= required {
                 return Ok(total_read);

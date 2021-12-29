@@ -30,6 +30,19 @@ impl Network {
         let mut total_read = 0;
         loop {
             let read = self.quic.recv(&mut self.read).await.unwrap();
+            if 0 == read {
+                return if self.read.is_empty() {
+                    Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        "connection closed by peer",
+                    ))
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "connection reset by peer",
+                    ))
+                };
+            }
             total_read += read;
             if total_read >= required {
                 return Ok(total_read);
@@ -82,7 +95,8 @@ impl Network {
             Ok(size) => size,
             Err(e) => return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string())),
         };
-        self.quic.send(write[..].to_vec()).await.unwrap();
+        let payload = write[..].to_vec();
+        self.quic.send(payload).await.unwrap();
         Ok(len)
     }
 
