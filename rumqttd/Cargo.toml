@@ -38,7 +38,7 @@ bytes = "1.0"
 warp = "0.3"
 futures-util = "0.3.8"
 pprof = { version = "0.4", features = ["flamegraph", "protobuf"], optional = true }
-quic-socket = {git = "https://github.com/Apolexian/QuicSocket", rev="6ab050249d2a692d798f26b5f94089145844bd48"}
+quic-socket = {git = "https://github.com/Apolexian/QuicSocket", rev="b9bcd4f5b1e7ee1d607bda6aabbe548a83fbb9e1"}
 
 # Optional
 tokio-rustls = { version = "0.22", optional = true }
