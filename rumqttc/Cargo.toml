@@ -29,7 +29,7 @@ async-channel = "1.5"
 log = "0.4"
 thiserror = "1.0.21"
 http = "^0.2"
-quic-socket = {git = "https://github.com/Apolexian/QuicSocket", rev="b9bcd4f5b1e7ee1d607bda6aabbe548a83fbb9e1"}
+quic-socket = {git = "https://github.com/Apolexian/QuicSocket", rev="7f55c10050c2476bcb6fe06c02396b4104bb7acf"}
 rand = "0.8"
 
 [dev-dependencies]
