@@ -235,7 +235,12 @@ impl Server {
 
     async fn start(&self) {
         let addr = "127.0.0.1:4442".parse().unwrap();
-        let server = QuicServer::new(Some(addr)).await;
+        let server = QuicServer::new(
+            Some(addr),
+            Some("https://localhost:4442".to_string()),
+            Some("localhost".to_string()),
+        )
+        .await;
         let delay = Duration::from_millis(self.config.next_connection_delay_ms);
         let config = Arc::new(self.config.connections.clone());
         let max_incoming_size = config.max_payload_size;
